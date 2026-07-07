@@ -96,7 +96,7 @@ async function fetchOpenEvents(): Promise<Event[]> {
 
 async function getAIPick(event: Event): Promise<string | null> {
   const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   const optionsList = event.options
     .map((o) => `[${o.id}] ${o.optionText}`)
