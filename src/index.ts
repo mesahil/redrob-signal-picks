@@ -164,26 +164,44 @@ interface Pick {
 async function fetchUnrevealedPicks(): Promise<Pick[]> {
   const allPicks: Pick[] = [];
   let cursor: string | null = null;
+  let page = 0;
 
   do {
+    page++;
     const res = await api.get("/v1/picks", {
       params: {
         status: ["WON", "LOST"],
         limit: 50,
         ...(cursor ? { cursor } : {}),
       },
+      // Must match mobile app — serializes arrays as status=WON&status=LOST
+      paramsSerializer: { indexes: null },
     });
+
     const payload = res.data?.data;
-    const page: Pick[] = payload?.picks || [];
-    allPicks.push(...page);
+    console.log(`  [reveal] Page ${page} raw response keys: ${Object.keys(payload || {}).join(", ")}`);
+
+    const picks: Pick[] = payload?.picks || [];
+    console.log(`  [reveal] Page ${page}: ${picks.length} pick(s) fetched`);
+
+    picks.forEach((p) => {
+      console.log(`    pick ${p.id} | status: ${p.status} | resultViewed: ${p.resultViewed} | event: "${p.event?.title}"`);
+    });
+
+    allPicks.push(...picks);
     cursor = payload?.pagination?.nextCursor ?? null;
+    console.log(`  [reveal] nextCursor: ${cursor ?? "none"}`);
   } while (cursor);
 
-  return allPicks.filter((p) => !p.resultViewed);
+  const unrevealed = allPicks.filter((p) => !p.resultViewed);
+  console.log(`  [reveal] Total fetched: ${allPicks.length}, unrevealed: ${unrevealed.length}`);
+  return unrevealed;
 }
 
 async function revealPick(pickId: string): Promise<void> {
-  await api.patch(`/v1/picks/${pickId}/result-viewed`);
+  console.log(`  [reveal] PATCH /v1/picks/${pickId}/result-viewed`);
+  const res = await api.patch(`/v1/picks/${pickId}/result-viewed`);
+  console.log(`  [reveal] Response status: ${res.status}`);
 }
 
 // ─── Place Pick ───────────────────────────────────────────────────────────────
