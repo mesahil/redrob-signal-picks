@@ -152,6 +152,40 @@ Reply with ONLY the raw option ID of your chosen option — no brackets, no expl
   return match.id;
 }
 
+// ─── Reveal Picks ────────────────────────────────────────────────────────────
+
+interface Pick {
+  id: string;
+  resultViewed: boolean;
+  status: string;
+  event: { title: string };
+}
+
+async function fetchUnrevealedPicks(): Promise<Pick[]> {
+  const allPicks: Pick[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const res = await api.get("/v1/picks", {
+      params: {
+        status: ["WON", "LOST"],
+        limit: 50,
+        ...(cursor ? { cursor } : {}),
+      },
+    });
+    const payload = res.data?.data;
+    const page: Pick[] = payload?.picks || [];
+    allPicks.push(...page);
+    cursor = payload?.pagination?.nextCursor ?? null;
+  } while (cursor);
+
+  return allPicks.filter((p) => !p.resultViewed);
+}
+
+async function revealPick(pickId: string): Promise<void> {
+  await api.patch(`/v1/picks/${pickId}/result-viewed`);
+}
+
 // ─── Place Pick ───────────────────────────────────────────────────────────────
 
 async function placePick(
@@ -203,6 +237,23 @@ async function main() {
       }
     }
     await sleep(4000); // stay under 15 req/min free tier limit
+  }
+
+  // ── Reveal settled picks ──────────────────────────────────────────────────
+  console.log("\nChecking for unrevealed results...");
+  try {
+    const unrevealed = await fetchUnrevealedPicks();
+    console.log(`Found ${unrevealed.length} unrevealed pick(s)`);
+    for (const pick of unrevealed) {
+      try {
+        await revealPick(pick.id);
+        console.log(`  Revealed: "${pick.event.title}" — ${pick.status}`);
+      } catch (err: any) {
+        console.error(`  Error revealing pick ${pick.id}: ${err.response?.data?.message || err.message}`);
+      }
+    }
+  } catch (err: any) {
+    console.error("Failed to fetch unrevealed picks:", err.message);
   }
 
   console.log(`\n[${new Date().toISOString()}] Run complete.`);
