@@ -95,7 +95,7 @@ async function fetchOpenEvents(): Promise<Event[]> {
 // ─── AI Pick ──────────────────────────────────────────────────────────────────
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" });
+const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
