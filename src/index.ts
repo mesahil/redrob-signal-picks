@@ -93,7 +93,7 @@ async function fetchOpenEvents(): Promise<Event[]> {
   console.log(`Total events fetched: ${allEvents.length}`);
 
   const now = Date.now();
-  const threeHours = 3 * 60 * 60 * 1000;
+  const fiveHours = 5 * 60 * 60 * 1000;
 
   return allEvents.filter((e) => {
     if (e.userPick) {
@@ -110,7 +110,7 @@ async function fetchOpenEvents(): Promise<Event[]> {
       console.log(`  [skip] "${e.title}" — already closed (closesAt: ${e.closesAt})`);
       return false;
     }
-    if (closesAt - now > threeHours) {
+    if (closesAt - now > fiveHours) {
       console.log(`  [skip] "${e.title}" — closes in ${minsLeft} min (more than 3h)`);
       return false;
     }
