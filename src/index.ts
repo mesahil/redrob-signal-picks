@@ -76,9 +76,20 @@ interface Event {
 // ─── Fetch Events ─────────────────────────────────────────────────────────────
 
 async function fetchOpenEvents(): Promise<Event[]> {
-  const res = await api.get("/v1/events");
-  const events: Event[] = res.data?.data || res.data || [];
-  return events.filter((e) => e.status === "OPENED" && !e.userPick);
+  const allEvents: Event[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const res = await api.get("/v1/events", {
+      params: { status: "OPENED", limit: 50, ...(cursor ? { cursor } : {}) },
+    });
+    const payload = res.data?.data;
+    const page: Event[] = payload?.events || [];
+    allEvents.push(...page);
+    cursor = payload?.pagination?.nextCursor ?? null;
+  } while (cursor);
+
+  return allEvents.filter((e) => !e.userPick);
 }
 
 // ─── AI Pick ──────────────────────────────────────────────────────────────────
