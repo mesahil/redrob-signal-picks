@@ -69,6 +69,7 @@ interface Event {
   description?: string | null;
   status: string;
   minBetAmount?: number;
+  closesAt?: string | null;
   options: EventOption[];
   userPick?: unknown | null;
 }
@@ -89,7 +90,15 @@ async function fetchOpenEvents(): Promise<Event[]> {
     cursor = payload?.pagination?.nextCursor ?? null;
   } while (cursor);
 
-  return allEvents.filter((e) => !e.userPick);
+  const now = Date.now();
+  const threeHours = 3 * 60 * 60 * 1000;
+
+  return allEvents.filter((e) => {
+    if (e.userPick) return false;
+    if (!e.closesAt) return false;
+    const closesAt = new Date(e.closesAt).getTime();
+    return closesAt > now && closesAt - now <= threeHours;
+  });
 }
 
 // ─── AI Pick ──────────────────────────────────────────────────────────────────
@@ -112,10 +121,10 @@ ${event.description ? `Context: ${event.description}` : ""}
 Options:
 ${optionsList}
 
-Reply with ONLY the option ID (the exact text inside the square brackets [ ]) of your chosen option. No explanation, no punctuation, nothing else.`;
+Reply with ONLY the raw option ID of your chosen option — no brackets, no explanation, nothing else. Example format: d0c14d45-9cf1-470f-84bb-ea8bccc39a40`;
 
   const result = await model.generateContent(prompt);
-  const text = result.response.text().trim();
+  const text = result.response.text().trim().replace(/^\[|\]$/g, "");
 
   const match = event.options.find((o) => o.id === text);
   if (!match) {
