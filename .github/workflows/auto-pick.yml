@@ -1,0 +1,28 @@
+name: Auto Pick
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: # allows manual trigger from GitHub UI
+
+jobs:
+  auto-pick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run auto-pick
+        run: npm start
+        env:
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+          REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
