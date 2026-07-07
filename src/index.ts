@@ -94,10 +94,12 @@ async function fetchOpenEvents(): Promise<Event[]> {
 
 // ─── AI Pick ──────────────────────────────────────────────────────────────────
 
-async function getAIPick(event: Event): Promise<string | null> {
-  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" });
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function getAIPick(event: Event): Promise<string | null> {
   const optionsList = event.options
     .map((o) => `[${o.id}] ${o.optionText}`)
     .join("\n");
@@ -159,17 +161,21 @@ async function main() {
       const optionId = await getAIPick(event);
       if (!optionId) {
         console.log(`  Skipped — AI could not determine an option`);
-        continue;
+      } else {
+        const amount = event.minBetAmount || 10;
+        await placePick(event.id, optionId, amount);
+        const optionText = event.options.find((o) => o.id === optionId)?.optionText;
+        console.log(`  Picked: "${optionText}" (amount: ${amount}, confidence: 70%)`);
       }
-
-      const amount = event.minBetAmount || 10;
-      await placePick(event.id, optionId, amount);
-
-      const optionText = event.options.find((o) => o.id === optionId)?.optionText;
-      console.log(`  Picked: "${optionText}" (amount: ${amount}, confidence: 70%)`);
     } catch (err: any) {
-      console.error(`  Error: ${err.response?.data?.message || err.message}`);
+      const status = err?.status ?? err?.response?.status;
+      if (status === 429) {
+        console.warn(`  Skipped — Gemini rate limit hit, will retry next run`);
+      } else {
+        console.error(`  Error: ${err.response?.data?.message || err.message}`);
+      }
     }
+    await sleep(4000); // stay under 15 req/min free tier limit
   }
 
   console.log(`\n[${new Date().toISOString()}] Run complete.`);
