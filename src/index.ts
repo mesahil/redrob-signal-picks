@@ -90,14 +90,32 @@ async function fetchOpenEvents(): Promise<Event[]> {
     cursor = payload?.pagination?.nextCursor ?? null;
   } while (cursor);
 
+  console.log(`Total events fetched: ${allEvents.length}`);
+
   const now = Date.now();
   const threeHours = 3 * 60 * 60 * 1000;
 
   return allEvents.filter((e) => {
-    if (e.userPick) return false;
-    if (!e.closesAt) return false;
+    if (e.userPick) {
+      console.log(`  [skip] "${e.title}" — already picked`);
+      return false;
+    }
+    if (!e.closesAt) {
+      console.log(`  [skip] "${e.title}" — no closesAt`);
+      return false;
+    }
     const closesAt = new Date(e.closesAt).getTime();
-    return closesAt > now && closesAt - now <= threeHours;
+    const minsLeft = Math.round((closesAt - now) / 60000);
+    if (closesAt <= now) {
+      console.log(`  [skip] "${e.title}" — already closed (closesAt: ${e.closesAt})`);
+      return false;
+    }
+    if (closesAt - now > threeHours) {
+      console.log(`  [skip] "${e.title}" — closes in ${minsLeft} min (more than 3h)`);
+      return false;
+    }
+    console.log(`  [pick] "${e.title}" — closes in ${minsLeft} min`);
+    return true;
   });
 }
 
