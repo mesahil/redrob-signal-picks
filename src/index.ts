@@ -162,39 +162,51 @@ interface Pick {
 }
 
 async function fetchUnrevealedPicks(): Promise<Pick[]> {
-  const allPicks: Pick[] = [];
+  const unrevealed: Pick[] = [];
   let cursor: string | null = null;
-  let page = 0;
+  let totalFetched = 0;
+  let consecutiveViewed = 0;
+  const MAX_PICKS = 200;
+  const STOP_AFTER_VIEWED = 4;
 
   do {
-    page++;
     const res = await api.get("/v1/picks", {
       params: {
         status: ["WON", "LOST"],
+        sortBy: "revealFirst",
         limit: 50,
         ...(cursor ? { cursor } : {}),
       },
-      // Must match mobile app — serializes arrays as status=WON&status=LOST
       paramsSerializer: { indexes: null },
     });
 
     const payload = res.data?.data;
-    console.log(`  [reveal] Page ${page} raw response keys: ${Object.keys(payload || {}).join(", ")}`);
-
     const picks: Pick[] = payload?.picks || [];
-    console.log(`  [reveal] Page ${page}: ${picks.length} pick(s) fetched`);
 
-    picks.forEach((p) => {
-      console.log(`    pick ${p.id} | status: ${p.status} | resultViewed: ${p.resultViewed} | event: "${p.event?.title}"`);
-    });
+    for (const pick of picks) {
+      totalFetched++;
+      if (!pick.resultViewed) {
+        consecutiveViewed = 0;
+        unrevealed.push(pick);
+        console.log(`  [reveal] Queued: "${pick.event?.title}" — ${pick.status}`);
+      } else {
+        consecutiveViewed++;
+        if (consecutiveViewed >= STOP_AFTER_VIEWED) {
+          console.log(`  [reveal] Hit ${STOP_AFTER_VIEWED} consecutive viewed picks — stopping early at ${totalFetched} total`);
+          return unrevealed;
+        }
+      }
 
-    allPicks.push(...picks);
+      if (totalFetched >= MAX_PICKS) {
+        console.log(`  [reveal] Reached ${MAX_PICKS} pick limit — stopping`);
+        return unrevealed;
+      }
+    }
+
     cursor = payload?.pagination?.nextCursor ?? null;
-    console.log(`  [reveal] nextCursor: ${cursor ?? "none"}`);
   } while (cursor);
 
-  const unrevealed = allPicks.filter((p) => !p.resultViewed);
-  console.log(`  [reveal] Total fetched: ${allPicks.length}, unrevealed: ${unrevealed.length}`);
+  console.log(`  [reveal] Done — fetched ${totalFetched}, unrevealed: ${unrevealed.length}`);
   return unrevealed;
 }
 
