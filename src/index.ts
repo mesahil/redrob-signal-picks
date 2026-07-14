@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from "axios";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -81,10 +81,10 @@ async function fetchOpenEvents(): Promise<Event[]> {
   let cursor: string | null = null;
 
   do {
-    const res = await api.get("/v1/events", {
+    const res: any = await api.get("/v1/events", {
       params: { status: "OPENED", limit: 50, ...(cursor ? { cursor } : {}) },
     });
-    const payload = res.data?.data;
+    const payload: any = res.data?.data;
     const page: Event[] = payload?.events || [];
     allEvents.push(...page);
     cursor = payload?.pagination?.nextCursor ?? null;
@@ -122,7 +122,27 @@ async function fetchOpenEvents(): Promise<Event[]> {
 // ─── AI Pick ──────────────────────────────────────────────────────────────────
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
+const model = genAI.getGenerativeModel({
+  model: "gemini-3.1-flash-lite",
+  tools: [{ googleSearchRetrieval: {} }],
+  generationConfig: {
+    responseMimeType: "application/json",
+    responseSchema: {
+      type: SchemaType.OBJECT,
+      properties: {
+        reasoning: {
+          type: SchemaType.STRING,
+          description: "Step-by-step reasoning evaluating the probability of each option based on web search results.",
+        },
+        chosenOptionId: {
+          type: SchemaType.STRING,
+          description: "The exact ID of the option that has the highest probability of winning.",
+        },
+      },
+      required: ["reasoning", "chosenOptionId"],
+    },
+  },
+});
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -132,6 +152,7 @@ async function getAIPick(event: Event): Promise<string | null> {
     .join("\n");
 
   const prompt = `You are analyzing a prediction market event. Based on the question and options, pick the single most likely outcome.
+Search the web for any relevant real-world context, statistics, recent news, or event details to ground your prediction.
 
 Question: ${event.title}
 ${event.description ? `Context: ${event.description}` : ""}
@@ -139,17 +160,26 @@ ${event.description ? `Context: ${event.description}` : ""}
 Options:
 ${optionsList}
 
-Reply with ONLY the raw option ID of your chosen option — no brackets, no explanation, nothing else. Example format: d0c14d45-9cf1-470f-84bb-ea8bccc39a40`;
+Perform a logical step-by-step reasoning analysis first. Evaluate the probability/likelihood of each option winning. Then, output your selected option ID in the JSON response structure.`;
 
   const result = await model.generateContent(prompt);
-  const text = result.response.text().trim().replace(/^\[|\]$/g, "");
+  const responseText = result.response.text();
 
-  const match = event.options.find((o) => o.id === text);
-  if (!match) {
-    console.warn(`  AI returned unrecognized option ID: "${text}"`);
+  try {
+    const parsed = JSON.parse(responseText);
+    console.log(`  AI Reasoning: ${parsed.reasoning}`);
+    const chosenOptionId = parsed.chosenOptionId?.trim();
+    const match = event.options.find((o) => o.id === chosenOptionId);
+    if (!match) {
+      console.warn(`  AI returned unrecognized option ID in JSON: "${chosenOptionId}"`);
+      return null;
+    }
+    return match.id;
+  } catch (err: any) {
+    console.error("  Failed to parse AI response JSON:", err.message);
+    console.debug("  Raw AI response was:", responseText);
     return null;
   }
-  return match.id;
 }
 
 // ─── Reveal Picks ────────────────────────────────────────────────────────────
@@ -170,7 +200,7 @@ async function fetchUnrevealedPicks(): Promise<Pick[]> {
   const STOP_AFTER_VIEWED = 4;
 
   do {
-    const res = await api.get("/v1/picks", {
+    const res: any = await api.get("/v1/picks", {
       params: {
         status: ["WON", "LOST"],
         sortBy: "revealFirst",
@@ -180,7 +210,7 @@ async function fetchUnrevealedPicks(): Promise<Pick[]> {
       paramsSerializer: { indexes: null },
     });
 
-    const payload = res.data?.data;
+    const payload: any = res.data?.data;
     const picks: Pick[] = payload?.picks || [];
 
     for (const pick of picks) {
