@@ -124,7 +124,6 @@ async function fetchOpenEvents(): Promise<Event[]> {
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({
   model: "gemini-3.1-flash-lite",
-  tools: [{ googleSearchRetrieval: {} }],
   generationConfig: {
     responseMimeType: "application/json",
     responseSchema: {
@@ -132,7 +131,7 @@ const model = genAI.getGenerativeModel({
       properties: {
         reasoning: {
           type: SchemaType.STRING,
-          description: "Step-by-step reasoning evaluating the probability of each option based on web search results.",
+          description: "Step-by-step reasoning evaluating the logical probability of each option.",
         },
         chosenOptionId: {
           type: SchemaType.STRING,
@@ -152,7 +151,7 @@ async function getAIPick(event: Event): Promise<string | null> {
     .join("\n");
 
   const prompt = `You are analyzing a prediction market event. Based on the question and options, pick the single most likely outcome.
-Search the web for any relevant real-world context, statistics, recent news, or event details to ground your prediction.
+Analyze the question carefully. Assess the logic of each option, eliminate any options that are logically impossible or highly improbable, and determine which option has the highest statistical or logical probability of winning.
 
 Question: ${event.title}
 ${event.description ? `Context: ${event.description}` : ""}
@@ -160,7 +159,9 @@ ${event.description ? `Context: ${event.description}` : ""}
 Options:
 ${optionsList}
 
-Perform a logical step-by-step reasoning analysis first. Evaluate the probability/likelihood of each option winning. Then, output your selected option ID in the JSON response structure.`;
+In your JSON response:
+1. First, perform a detailed step-by-step reasoning analysis evaluating the likelihood of each option based on logical constraints and prior knowledge. Explain why the chosen option is the most likely.
+2. Then, provide the exact ID of the option with the highest probability of winning.`;
 
   const result = await model.generateContent(prompt);
   const responseText = result.response.text();
