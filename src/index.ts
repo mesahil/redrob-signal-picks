@@ -125,8 +125,8 @@ async function fetchOpenEvents(): Promise<Event[]> {
 const apiKeys: string[] = process.env.GEMINI_API_KEYS
   ? process.env.GEMINI_API_KEYS.split(",").map((k) => k.trim()).filter(Boolean)
   : process.env.GEMINI_API_KEY
-  ? [process.env.GEMINI_API_KEY.trim()]
-  : [];
+    ? [process.env.GEMINI_API_KEY.trim()]
+    : [];
 
 if (apiKeys.length === 0) {
   console.error("Missing required env vars: GEMINI_API_KEYS or GEMINI_API_KEY");
@@ -135,7 +135,7 @@ if (apiKeys.length === 0) {
 
 // Model Priority List requested
 const MODEL_PRIORITY_LIST: string[] = [
-  "gemini-2.5-flash",
+  // "gemini-2.5-flash",
   "gemma-4-31b-it",
   "gemini-3.1-flash-lite",
 ];
