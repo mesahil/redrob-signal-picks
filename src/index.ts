@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from "axios";
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -81,10 +81,10 @@ async function fetchOpenEvents(): Promise<Event[]> {
   let cursor: string | null = null;
 
   do {
-    const res: any = await api.get("/v1/events", {
+    const res = await api.get("/v1/events", {
       params: { status: "OPENED", limit: 50, ...(cursor ? { cursor } : {}) },
     });
-    const payload: any = res.data?.data;
+    const payload = res.data?.data;
     const page: Event[] = payload?.events || [];
     allEvents.push(...page);
     cursor = payload?.pagination?.nextCursor ?? null;
@@ -119,186 +119,37 @@ async function fetchOpenEvents(): Promise<Event[]> {
   });
 }
 
-// ─── AI Pick Setup ────────────────────────────────────────────────────────────
+// ─── AI Pick ──────────────────────────────────────────────────────────────────
 
-// Parse multiple API keys (comma-separated GEMINI_API_KEYS or single GEMINI_API_KEY)
-const apiKeys: string[] = process.env.GEMINI_API_KEYS
-  ? process.env.GEMINI_API_KEYS.split(",").map((k) => k.trim()).filter(Boolean)
-  : process.env.GEMINI_API_KEY
-    ? [process.env.GEMINI_API_KEY.trim()]
-    : [];
-
-if (apiKeys.length === 0) {
-  console.error("Missing required env vars: GEMINI_API_KEYS or GEMINI_API_KEY");
-  process.exit(1);
-}
-
-// Model Priority List requested
-const MODEL_PRIORITY_LIST: string[] = [
-  // "gemini-2.5-flash",
-  "gemma-4-31b-it",
-  "gemini-3.1-flash-lite",
-];
-
-// Cache GoogleGenerativeAI instances per API Key
-const genAIInstances = new Map<string, GoogleGenerativeAI>();
-function getGenAIInstance(key: string): GoogleGenerativeAI {
-  if (!genAIInstances.has(key)) {
-    genAIInstances.set(key, new GoogleGenerativeAI(key));
-  }
-  return genAIInstances.get(key)!;
-}
-
-// Sticky pointers: current Key index and current Model index
-let currentKeyIndex = 0;
-let currentModelIndex = 0;
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-interface AIPickResult {
-  optionId: string;
-  confidence: number;
-  modelUsed: string;
-}
-
-async function getAIPick(event: Event): Promise<AIPickResult> {
+async function getAIPick(event: Event): Promise<string | null> {
   const optionsList = event.options
-    .map((o) => `Option ID: "${o.id}" -> ${o.optionText}`)
+    .map((o) => `[${o.id}] ${o.optionText}`)
     .join("\n");
 
-  const prompt = `You are a prediction market analyst. You MUST evaluate this event and select the single option with the highest logical and statistical probability of winning.
+  const prompt = `You are analyzing a prediction market event. Based on the question and options, pick the single most likely outcome.
 
 Question: ${event.title}
 ${event.description ? `Context: ${event.description}` : ""}
-${event.closesAt ? `Closes At: ${event.closesAt}` : ""}
 
 Options:
 ${optionsList}
 
-Follow this exact evaluation process:
-1. Determine the category (Sports, News/Politics, Crypto/Finance, Entertainment, or Miscellaneous).
-2. Perform a multi-perspective analysis for EACH option:
-   - What must occur for this option to win?
-   - What risks could cause this option to lose?
-3. Apply statistical & domain rules:
-   - For binary Yes/No: Assess default base-rate (No is often default unless active triggers occur).
-   - For sports/competitions: Favor higher base-probability outcomes unless strong contradictory factors exist.
-   - For price/time targets: Assess whether the target is realistic within the timeframe before closesAt.
-4. Estimate an approximate percentage probability for every option.
-5. Choose the option ID with the single highest probability.
-6. Provide your evaluated confidence score (integer between 50 and 95) for your choice.`;
+Reply with ONLY the raw option ID of your chosen option — no brackets, no explanation, nothing else. Example format: d0c14d45-9cf1-470f-84bb-ea8bccc39a40`;
 
-  // Cascade across API Keys
-  while (currentKeyIndex < apiKeys.length) {
-    const activeApiKey = apiKeys[currentKeyIndex];
-    const aiInstance = getGenAIInstance(activeApiKey);
+  const result = await model.generateContent(prompt);
+  const text = result.response.text().trim().replace(/^\[|\]$/g, "");
 
-    // Cascade across Models for the active API Key
-    while (currentModelIndex < MODEL_PRIORITY_LIST.length) {
-      const activeModelName = MODEL_PRIORITY_LIST[currentModelIndex];
-
-      try {
-        console.log(
-          `  [AI] Querying Key #${currentKeyIndex + 1} (${activeApiKey.slice(0, 6)}...) with model "${activeModelName}"`
-        );
-
-        const modelConfig: any = {
-          model: activeModelName,
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: SchemaType.OBJECT,
-              properties: {
-                reasoning: {
-                  type: SchemaType.STRING,
-                  description: "Step-by-step comparative evaluation of each option's probability.",
-                },
-                chosenOptionId: {
-                  type: SchemaType.STRING,
-                  description: "The exact ID of the option with the highest winning probability.",
-                },
-                confidence: {
-                  type: SchemaType.NUMBER,
-                  description: "Confidence score percentage (50 to 95) for the chosen option.",
-                },
-              },
-              required: ["reasoning", "chosenOptionId", "confidence"],
-            },
-          },
-        };
-
-        const enableInternet = activeModelName !== "gemini-3.1-flash-lite";
-        let result: any;
-
-        if (enableInternet) {
-          try {
-            const modelWithTools = aiInstance.getGenerativeModel({
-              ...modelConfig,
-              tools: [{ googleSearch: {} } as any],
-            });
-            result = await modelWithTools.generateContent(prompt);
-          } catch (toolErr: any) {
-            console.warn(
-              `  [Internet Notice] "${activeModelName}" search tools failed (${toolErr.message.slice(0, 70)}...). Falling back to basic mode...`
-            );
-            const basicModel = aiInstance.getGenerativeModel(modelConfig);
-            result = await basicModel.generateContent(prompt);
-          }
-        } else {
-          // gemini-3.1-flash-lite runs directly in basic mode without internet search tools
-          const basicModel = aiInstance.getGenerativeModel(modelConfig);
-          result = await basicModel.generateContent(prompt);
-        }
-
-        const responseText = result.response.text();
-        const parsed = JSON.parse(responseText);
-
-        console.log(`  AI Reasoning (${activeModelName}): ${parsed.reasoning}`);
-        const chosenOptionId = parsed.chosenOptionId?.trim();
-        const match = event.options.find((o) => o.id === chosenOptionId);
-
-        const parsedConfidence = Math.min(
-          95,
-          Math.max(50, Math.round(Number(parsed.confidence) || 70))
-        );
-
-        if (match) {
-          return { optionId: match.id, confidence: parsedConfidence, modelUsed: activeModelName };
-        }
-
-        console.warn(`  AI returned unrecognized option ID: "${chosenOptionId}"`);
-      } catch (err: any) {
-        console.warn(
-          `  [Model Failover] Key #${currentKeyIndex + 1} + "${activeModelName}" failed: ${err.message}`
-        );
-
-        currentModelIndex++;
-        if (currentModelIndex < MODEL_PRIORITY_LIST.length) {
-          console.log(
-            `  [Next Model] Advancing to model "${MODEL_PRIORITY_LIST[currentModelIndex]}" for Key #${currentKeyIndex + 1}...`
-          );
-          await sleep(1000);
-        }
-      }
-    }
-
-    // All models on current API Key exhausted -> switch to next API Key and reset model index to 0
-    currentKeyIndex++;
-    currentModelIndex = 0;
-
-    if (currentKeyIndex < apiKeys.length) {
-      console.log(
-        `  [Key Switch] All models exhausted for Key #${currentKeyIndex}. Switching to API Key #${currentKeyIndex + 1}!`
-      );
-      await sleep(2000);
-    } else {
-      console.error("  [All Keys Exhausted] All API keys and models exhausted.");
-    }
+  const match = event.options.find((o) => o.id === text);
+  if (!match) {
+    console.warn(`  AI returned unrecognized option ID: "${text}"`);
+    return null;
   }
-
-  // Fallback if all keys & all models fail (Guarantees 100% event pick coverage, no event skipped)
-  console.warn(`  Fallback triggered: Picking first option "${event.options[0]?.optionText}"`);
-  return { optionId: event.options[0].id, confidence: 50, modelUsed: "fallback-default" };
+  return match.id;
 }
 
 // ─── Reveal Picks ────────────────────────────────────────────────────────────
@@ -319,7 +170,7 @@ async function fetchUnrevealedPicks(): Promise<Pick[]> {
   const STOP_AFTER_VIEWED = 4;
 
   do {
-    const res: any = await api.get("/v1/picks", {
+    const res = await api.get("/v1/picks", {
       params: {
         status: ["WON", "LOST"],
         sortBy: "revealFirst",
@@ -329,7 +180,7 @@ async function fetchUnrevealedPicks(): Promise<Pick[]> {
       paramsSerializer: { indexes: null },
     });
 
-    const payload: any = res.data?.data;
+    const payload = res.data?.data;
     const picks: Pick[] = payload?.picks || [];
 
     for (const pick of picks) {
@@ -370,14 +221,13 @@ async function revealPick(pickId: string): Promise<void> {
 async function placePick(
   eventId: string,
   optionId: string,
-  amount: number,
-  confidence: number = 70
+  amount: number
 ): Promise<void> {
   await api.post("/v1/picks", {
     eventId,
     optionId,
     amount,
-    confidence,
+    confidence: 70,
   });
 }
 
@@ -399,15 +249,22 @@ async function main() {
   for (const event of events) {
     console.log(`\nProcessing: "${event.title}"`);
     try {
-      const { optionId, confidence, modelUsed } = await getAIPick(event);
-      const amount = event.minBetAmount || 10;
-      await placePick(event.id, optionId, amount, confidence);
-      const optionText = event.options.find((o) => o.id === optionId)?.optionText;
-      console.log(
-        `  [PICKED via ${modelUsed}] "${optionText}" (amount: ${amount}, confidence: ${confidence}%)`
-      );
+      const optionId = await getAIPick(event);
+      if (!optionId) {
+        console.log(`  Skipped — AI could not determine an option`);
+      } else {
+        const amount = event.minBetAmount || 10;
+        await placePick(event.id, optionId, amount);
+        const optionText = event.options.find((o) => o.id === optionId)?.optionText;
+        console.log(`  Picked: "${optionText}" (amount: ${amount}, confidence: 70%)`);
+      }
     } catch (err: any) {
-      console.error(`  Error processing event "${event.title}":`, err.response?.data?.message || err.message);
+      const status = err?.status ?? err?.response?.status;
+      if (status === 429) {
+        console.warn(`  Skipped — Gemini rate limit hit, will retry next run`);
+      } else {
+        console.error(`  Error: ${err.response?.data?.message || err.message}`);
+      }
     }
     await sleep(4000); // stay under 15 req/min free tier limit
   }
