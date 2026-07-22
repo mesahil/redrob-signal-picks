@@ -135,8 +135,8 @@ if (apiKeys.length === 0) {
 
 // Model Priority List requested
 const MODEL_PRIORITY_LIST: string[] = [
-  // "gemini-2.5-flash",
   "gemma-4-31b-it",
+  "gemini-3.6-flash-lite",
   "gemini-3.1-flash-lite",
 ];
 
@@ -154,6 +154,36 @@ let currentKeyIndex = 0;
 let currentModelIndex = 0;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+let last15RpmCallTimestamp = 0;
+
+async function ensure15RpmPacing(modelName: string): Promise<void> {
+  const is15RpmModel = !modelName.startsWith("gemma");
+  if (!is15RpmModel) return;
+
+  const now = Date.now();
+  const elapsed = now - last15RpmCallTimestamp;
+  const MIN_INTERVAL_MS = 4100; // 4.1s safety margin for 15 req/min (60s / 15 = 4s)
+
+  if (elapsed < MIN_INTERVAL_MS && last15RpmCallTimestamp > 0) {
+    const waitMs = MIN_INTERVAL_MS - elapsed;
+    console.log(
+      `  [Rate Limit Pacer] Waiting ${(waitMs / 1000).toFixed(1)}s for "${modelName}" (15 RPM limit)...`
+    );
+    await sleep(waitMs);
+  }
+  last15RpmCallTimestamp = Date.now();
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMessage: string): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(errorMessage));
+    }, ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+}
 
 interface AIPickResult {
   optionId: string;
@@ -227,7 +257,10 @@ Follow this exact evaluation process:
           },
         };
 
-        const enableInternet = activeModelName !== "gemini-3.1-flash-lite";
+        // Enforce 15 RPM inter-request delay pacing for non-Gemma models (e.g. gemini-3.6-flash-lite)
+        await ensure15RpmPacing(activeModelName);
+
+        const enableInternet = !activeModelName.includes("-lite");
         let result: any;
 
         if (enableInternet) {
@@ -236,18 +269,37 @@ Follow this exact evaluation process:
               ...modelConfig,
               tools: [{ googleSearch: {} } as any],
             });
-            result = await modelWithTools.generateContent(prompt);
+            const timeoutMs = activeModelName.startsWith("gemma") ? 12000 : 25000;
+            result = await withTimeout(
+              modelWithTools.generateContent(prompt),
+              timeoutMs,
+              `"${activeModelName}" search query timed out after ${timeoutMs / 1000}s`
+            );
           } catch (toolErr: any) {
             console.warn(
-              `  [Internet Notice] "${activeModelName}" search tools failed (${toolErr.message.slice(0, 70)}...). Falling back to basic mode...`
+              `  [Internet Notice] "${activeModelName}" search tools failed (${toolErr.message}).`
             );
+            if (activeModelName.startsWith("gemma")) {
+              throw new Error(
+                `[Internet Notice] "${activeModelName}" search tools failed/timed out (${toolErr.message}). Switching to fallback model.`
+              );
+            }
+            console.warn(`  Falling back to basic mode for "${activeModelName}"...`);
             const basicModel = aiInstance.getGenerativeModel(modelConfig);
-            result = await basicModel.generateContent(prompt);
+            result = await withTimeout(
+              basicModel.generateContent(prompt),
+              20000,
+              `"${activeModelName}" basic query timed out after 20s`
+            );
           }
         } else {
-          // gemini-3.1-flash-lite runs directly in basic mode without internet search tools
+          // Lite models run directly in basic mode without internet search tools
           const basicModel = aiInstance.getGenerativeModel(modelConfig);
-          result = await basicModel.generateContent(prompt);
+          result = await withTimeout(
+            basicModel.generateContent(prompt),
+            20000,
+            `"${activeModelName}" basic query timed out after 20s`
+          );
         }
 
         const responseText = result.response.text();
@@ -268,9 +320,17 @@ Follow this exact evaluation process:
 
         console.warn(`  AI returned unrecognized option ID: "${chosenOptionId}"`);
       } catch (err: any) {
-        console.warn(
-          `  [Model Failover] Key #${currentKeyIndex + 1} + "${activeModelName}" failed: ${err.message}`
-        );
+        const isRateLimitErr =
+          err.message?.includes("429") ||
+          err.message?.includes("RESOURCE_EXHAUSTED") ||
+          err.message?.toLowerCase().includes("rate limit");
+
+        if (isRateLimitErr) {
+          console.warn(
+            `  [Rate Limit Backoff] "${activeModelName}" hit rate limit (429). Sleeping 10s before failover...`
+          );
+          await sleep(10000);
+        }
 
         currentModelIndex++;
         if (currentModelIndex < MODEL_PRIORITY_LIST.length) {
