@@ -136,7 +136,7 @@ if (apiKeys.length === 0) {
 // Model Priority List requested
 const MODEL_PRIORITY_LIST: string[] = [
   "gemma-4-31b-it",
-  "gemini-3.6-flash-lite",
+  "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
 ];
 
