@@ -507,7 +507,7 @@ async function checkAndClaimDailyDraw(): Promise<void> {
 }
 
 /**
- * Returns true if the current IST time is between 14:00 and 14:45 (inclusive).
+ * Returns true if the current IST time is between 11:15 AM and 12:00 PM (inclusive).
  */
 function isDailyDrawWindow(): boolean {
   // IST = UTC+5:30
@@ -515,7 +515,7 @@ function isDailyDrawWindow(): boolean {
   const istOffset = 5 * 60 + 30; // minutes
   const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
   const istMinutes = (utcMinutes + istOffset) % (24 * 60);
-  return istMinutes >= 14 * 60 && istMinutes < 14 * 60 + 45;
+  return istMinutes >= 11 * 60 + 15 && istMinutes <= 12 * 60;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -523,11 +523,11 @@ function isDailyDrawWindow(): boolean {
 async function main() {
   console.log(`\n[${new Date().toISOString()}] Starting auto-pick run...`);
 
-  // ─── 0. Daily draw (only between 2:00–2:45 PM IST) ────────────────────────
+  // ─── 0. Daily draw (only between 11:15 AM – 12:00 PM IST) ─────────────────
   if (isDailyDrawWindow()) {
     await checkAndClaimDailyDraw();
   } else {
-    console.log("  [draw] Outside 2:00–2:45 PM IST window — skipping daily draw.");
+    console.log("  [draw] Outside 11:15 AM – 12:00 PM IST window — skipping daily draw.");
   }
 
   // ─── 1. Reveal settled picks ───────────────────────────────────────────────
