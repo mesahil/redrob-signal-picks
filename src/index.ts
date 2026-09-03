@@ -23,18 +23,20 @@ if (!accessToken || !refreshToken || apiKeys.length === 0) {
 
 // ─── Bet Sizing Configuration ──────────────────────────────────────────────────
 
-// Balance threshold for switching from minimum bet mode to dynamic second lowest bet mode (6 Lakh / 600,000 RP)
-const BALANCE_THRESHOLD = 600000;
+// Balance thresholds (in RP)
+const THRESHOLD_TIER_2 = 600000;   // 6 Lakh: 2nd lowest tier (max / 4)
+const THRESHOLD_TIER_3 = 1500000;  // 15 Lakh: 3rd tier (max / 2)
+const THRESHOLD_TIER_4 = 2200000;  // 22 Lakh: 4th tier / max RP
 
 // Fallback maximum bet amount (2,000 RP)
 const BET_MAX_AMOUNT = 2000;
 
 /**
- * Calculates the bet amount dynamically based on available balance.
- * - If balance < BALANCE_THRESHOLD (< 600,000 RP): returns minimum required bet for the event.
- * - If balance >= BALANCE_THRESHOLD (>= 600,000 RP): calculates the 2nd lowest tier out of the 4 options
- *   derived from event maxBetAmount (e.g., 20k max -> options are 2k, 5k, 10k, 20k -> 2nd lowest is 5k = max / 4),
- *   ensuring it is at least the event's minBetAmount.
+ * Calculates the bet amount dynamically based on available balance:
+ * - Balance >= 22 Lakh (2,200,000 RP): 4th tier -> max RP (eventMax)
+ * - Balance >= 15 Lakh (1,500,000 RP): 3rd tier -> 2nd highest (max / 2)
+ * - Balance >= 6 Lakh (600,000 RP): 2nd tier -> 2nd lowest (max / 4)
+ * - Balance < 6 Lakh: 1st tier -> event minimum bet (Math.max(10, minBetAmount))
  */
 export function calculateBetAmount(
   balance: number,
@@ -44,20 +46,36 @@ export function calculateBetAmount(
   const minRequired = Math.max(10, minBetAmount);
   const eventMax = maxBetAmount && maxBetAmount > minRequired ? maxBetAmount : BET_MAX_AMOUNT;
 
-  if (balance < BALANCE_THRESHOLD) {
+  if (balance >= THRESHOLD_TIER_4) {
+    const finalBet = Math.max(eventMax, minRequired);
     console.log(
-      `  [Bet Sizing] Balance (${balance.toLocaleString()}) < Threshold (${BALANCE_THRESHOLD.toLocaleString()}) -> Using event minimum bet: ${minRequired.toLocaleString()} RP`
+      `  [Bet Sizing] Balance (${balance.toLocaleString()}) >= 22 Lakh (${THRESHOLD_TIER_4.toLocaleString()}) -> Event Max: ${eventMax.toLocaleString()} RP | Using Max tier: ${finalBet.toLocaleString()} RP`
     );
-    return minRequired;
+    return finalBet;
   }
 
-  const secondLowestBet = Math.round(eventMax / 4);
-  const finalBet = Math.max(secondLowestBet, minRequired);
-  console.log(
-    `  [Bet Sizing] Balance (${balance.toLocaleString()}) >= Threshold (${BALANCE_THRESHOLD.toLocaleString()}) -> Event Max: ${eventMax.toLocaleString()} RP | Using 2nd lowest value (Max/4): ${finalBet.toLocaleString()} RP (min required: ${minRequired.toLocaleString()} RP)`
-  );
+  if (balance >= THRESHOLD_TIER_3) {
+    const thirdTierBet = Math.round(eventMax / 2);
+    const finalBet = Math.max(thirdTierBet, minRequired);
+    console.log(
+      `  [Bet Sizing] Balance (${balance.toLocaleString()}) >= 15 Lakh (${THRESHOLD_TIER_3.toLocaleString()}) -> Event Max: ${eventMax.toLocaleString()} RP | Using 3rd tier (Max/2): ${finalBet.toLocaleString()} RP`
+    );
+    return finalBet;
+  }
 
-  return finalBet;
+  if (balance >= THRESHOLD_TIER_2) {
+    const secondLowestBet = Math.round(eventMax / 4);
+    const finalBet = Math.max(secondLowestBet, minRequired);
+    console.log(
+      `  [Bet Sizing] Balance (${balance.toLocaleString()}) >= 6 Lakh (${THRESHOLD_TIER_2.toLocaleString()}) -> Event Max: ${eventMax.toLocaleString()} RP | Using 2nd lowest value (Max/4): ${finalBet.toLocaleString()} RP`
+    );
+    return finalBet;
+  }
+
+  console.log(
+    `  [Bet Sizing] Balance (${balance.toLocaleString()}) < 6 Lakh (${THRESHOLD_TIER_2.toLocaleString()}) -> Using event minimum bet: ${minRequired.toLocaleString()} RP`
+  );
+  return minRequired;
 }
 
 // ─── API Client ───────────────────────────────────────────────────────────────
@@ -556,8 +574,8 @@ async function main() {
     console.error("Failed to fetch user balance:", err.message);
   }
 
-  if (availableBalance <= 2000) {
-    console.log(`Available balance (${availableBalance}) is <= 2000 — skipping open events check.`);
+  if (availableBalance < 2000) {
+    console.log(`Available balance (${availableBalance}) is < 2000 — skipping open events check.`);
   } else {
     let events: Event[];
     try {
